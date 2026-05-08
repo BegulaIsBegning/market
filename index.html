@@ -6,7 +6,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Skybound Economy</title>
-  <meta name="description" content="Skybound Minecraft Server Investment Platform — live market simulation, company registry, transaction ledger." />
+  <meta name="description" content="Skybound" />
 
   <!-- React 18 + Babel standalone (no build step required) -->
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -39,15 +39,9 @@
 const SECTORS = ["Farming", "Trade", "Services", "Mining", "Crafting"];
 
 const EVENT_TEMPLATES = [
-  { type: "boom",   title: "Market Boom",        msg: "Investor confidence surges. Broad rally underway.",                sector: null,       mult: 1.06 },
-  { type: "crash",  title: "Market Correction",   msg: "Panic selling triggers a broad pullback. Volatility elevated.",    sector: null,       mult: 0.94 },
-  { type: "sector", title: "Farming Surge",       msg: "Seasonal harvest event drives Farming stocks higher.",             sector: "Farming",  mult: 1.12 },
-  { type: "sector", title: "Mining Rush",         msg: "New deep-cave discovery sparks Mining sector frenzy.",             sector: "Mining",   mult: 1.15 },
-  { type: "sector", title: "Trade Slump",         msg: "Supply chain disruptions weigh on Trade sector earnings.",         sector: "Trade",    mult: 0.88 },
-  { type: "hype",   title: "Hype Cycle",          msg: "Speculation runs wild — a mystery asset rockets on no news.",      sector: null,       mult: 1.0  },
-  { type: "sector", title: "Services Boom",       msg: "Player activity spike benefits the Services sector.",              sector: "Services", mult: 1.09 },
-  { type: "crash",  title: "Creeper Incident",    msg: "Infrastructure damage report spooks the market.",                  sector: null,       mult: 0.96 },
-  { type: "sector", title: "Crafting Festival",   msg: "Seasonal crafting event floods demand for artisan goods.",         sector: "Crafting", mult: 1.11 },
+  { type: "boom",   title: "Market Boom",        msg: "The Market Grows subtly.",                sector: null,       mult: 1.4 },
+  { type: "crash",  title: "Market Correction",   msg: "Panic on the sales.",    sector: null,       mult: 0.81 },
+  { type: "hype",   title: "The Speculation",          msg: "Speculations higher than a cumulonimbus.",      sector: null,       mult: 2.0  },
 ];
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -476,7 +470,7 @@ function ContestModal({ tx, onClose, onContest }) {
 }
 
 // ─── MARKET APP ───────────────────────────────────────────────────────────────
-const NAV_TABS = ["Market", "Portfolio", "Transactions", "Watchlist", "News"];
+const NAV_TABS = ["Market", "About my Investments", "Transactions", "Watchlist", "Under Development"];
 
 function MarketApp({ assets, events, activeEvent, transactions, onTrade, onContest, playerName }) {
   const [tab, setTab] = useState("Market");
@@ -523,7 +517,7 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
       {activeEvent && (
         <div style={{ position: "fixed", top: 16, right: 16, zIndex: 200, background: S.panel, border: `1px solid ${S.purple}`, borderRadius: 10, padding: "12px 16px", maxWidth: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.7)", animation: "slideIn 0.3s ease" }}>
           <style>{`@keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
-          <div style={{ fontSize: 10, color: S.purple, fontWeight: 700, marginBottom: 4, letterSpacing: 1 }}>📡 MARKET EVENT</div>
+          <div style={{ fontSize: 10, color: S.purple, fontWeight: 700, marginBottom: 4, letterSpacing: 1 }}>Something happned!</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: S.text, marginBottom: 2 }}>{activeEvent.title}</div>
           <div style={{ fontSize: 12, color: S.sub }}>{activeEvent.msg}</div>
         </div>
@@ -533,8 +527,8 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
       <div style={{ borderBottom: `1px solid ${S.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #3b82f6, #8b5cf6)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>◈</div>
-          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>SKYBOUND</span>
-          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>MARKET</span>
+          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>Skybound</span>
+          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>Market</span>
         </div>
         <div style={{ display: "flex", gap: 2 }}>
           {NAV_TABS.map(t => (
@@ -542,8 +536,8 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
           ))}
         </div>
         <div style={{ fontFamily: S.mono, fontSize: 12, color: S.sub }}>
-          <span style={{ color: S.dim }}>bal </span><span style={{ color: balance >= 0 ? S.green : S.red, fontWeight: 700 }}>{fmt(balance)} SC</span>
-          <span style={{ color: S.dim, marginLeft: 12 }}>port </span><span style={{ color: S.blue, fontWeight: 700 }}>{fmt(portfolioValue)} SC</span>
+          <span style={{ color: S.dim }}>Balance </span><span style={{ color: balance >= 0 ? S.green : S.red, fontWeight: 700 }}>{fmt(balance)} Atzlk's Coins</span>
+          <span style={{ color: S.dim, marginLeft: 12 }}>port </span><span style={{ color: S.blue, fontWeight: 700 }}>{fmt(portfolioValue)} ATC</span>
         </div>
       </div>
 
@@ -552,9 +546,9 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
         <div style={{ padding: 24 }}>
           {assets.length === 0 ? (
             <div style={{ textAlign: "center", padding: "80px 0", color: S.dim }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>◈</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: S.sub, marginBottom: 8 }}>No assets listed yet</div>
-              <div style={{ fontSize: 13, color: S.dim }}>Register a company on the Companies page to list the first asset.</div>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>●</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: S.sub, marginBottom: 8 }}>No assets there!</div>
+              <div style={{ fontSize: 13, color: S.dim }}>Register a company!</div>
             </div>
           ) : (
             <>
@@ -602,10 +596,10 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
         <div style={{ padding: 24 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
             {[
-              ["SC Balance",    fmt(balance) + " SC",       balance >= 0 ? S.green : S.red],
-              ["Portfolio Val", fmt(portfolioValue) + " SC", S.blue],
+              ["Balance",    fmt(balance) + " ATC",       balance >= 0 ? S.green : S.red],
+              ["My Wallet Value", fmt(portfolioValue) + " ATC", S.blue],
               ["Holdings",      Object.values(portfolio).filter(v => v > 0).length + " assets", S.purple],
-              ["Net P&L",       (realizedPnl >= 0 ? "+" : "") + fmt(realizedPnl) + " SC", realizedPnl >= 0 ? S.green : S.red],
+              ["Profit",       (realizedPnl >= 0 ? "+" : "") + fmt(realizedPnl) + " ATC", realizedPnl >= 0 ? S.green : S.red],
             ].map(([label, val, col]) => (
               <div key={label} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16 }}>
                 <div style={{ fontSize: 11, color: S.sub, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
@@ -615,7 +609,7 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
           </div>
 
           {Object.values(portfolio).every(v => v <= 0) ? (
-            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No holdings yet. Buy some shares from the Market tab.</div>
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>You don't have nothing to display here.</div>
           ) : (
             <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", borderBottom: `1px solid ${S.border}`, fontSize: 12, fontWeight: 700, color: S.sub, textTransform: "uppercase", letterSpacing: "0.5px" }}>Holdings</div>
@@ -672,7 +666,7 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
           ) : (
             <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
               <div style={{ display: "grid", gridTemplateColumns: "110px 90px 90px 60px 80px 90px 80px 80px", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${S.border}` }}>
-                {["TX ID", "Asset", "Buyer", "Qty", "Price/sh", "Total", "Status", "Action"].map((h, i) => (
+                {["ID", "Asset", "Buyer", "Qty", "Price/sh", "Total", "Status", "Action"].map((h, i) => (
                   <div key={i} style={{ fontSize: 10, color: S.dim, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</div>
                 ))}
               </div>
@@ -719,7 +713,7 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
       {tab === "Watchlist" && (
         <div style={{ padding: 24 }}>
           {watchlist.size === 0 ? (
-            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No assets on watchlist. Click ★ to add.</div>
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>You don't watch any videos--- any company. Click ★ to add.</div>
           ) : (
             <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
               {assets.filter(a => watchlist.has(a.id)).map(a => (
@@ -734,7 +728,7 @@ function MarketApp({ assets, events, activeEvent, transactions, onTrade, onConte
       {tab === "News" && (
         <div style={{ padding: 24, maxWidth: 600 }}>
           {events.length === 0 ? (
-            <div style={{ color: S.dim, textAlign: "center", padding: 40 }}>Waiting for market events…</div>
+            <div style={{ color: S.dim, textAlign: "center", padding: 40 }}>You came here to be curious ik you dont care about this</div>
           ) : events.map((ev, i) => (
             <div key={ev.id || i} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16, marginBottom: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -806,8 +800,8 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
       <div style={{ borderBottom: `1px solid ${S.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #10b981, #3b82f6)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>◉</div>
-          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>SKYBOUND</span>
-          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>COMPANIES</span>
+          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>Skybound</span>
+          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>Companies</span>
         </div>
         <div style={{ display: "flex", gap: 2 }}>
           {COMPANY_TABS.map(t => (
@@ -835,8 +829,8 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
           {registeredAssets.length === 0 ? (
             <div style={{ textAlign: "center", padding: "80px 0", color: S.dim }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>◉</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: S.sub, marginBottom: 8 }}>No companies registered yet</div>
-              <div style={{ fontSize: 13, color: S.dim }}>Be the first to register your company and list it on the exchange.</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: S.sub, marginBottom: 8 }}>Nothing here... look to this cat in the corner!</div>
+              <div style={{ fontSize: 13, color: S.dim }}>Just list something here ✌️😌.</div>
               <button onClick={() => setTab("Register")} style={{ marginTop: 16, background: "#052e23", border: `1px solid ${S.teal}`, borderRadius: 6, color: S.teal, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontFamily: S.font, fontWeight: 600 }}>Register Now →</button>
             </div>
           ) : (
@@ -859,7 +853,7 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
                       </div>
                       {asset && (
                         <div style={{ textAlign: "right" }}>
-                          <div style={{ fontFamily: S.mono, fontSize: 18, fontWeight: 800, color: S.text }}>{fmt(asset.price)} SC</div>
+                          <div style={{ fontFamily: S.mono, fontSize: 18, fontWeight: 800, color: S.text }}>{fmt(asset.price)} ATC</div>
                           <div style={{ fontSize: 11, color: S.sub }}>{c.shares.toLocaleString()} shares</div>
                         </div>
                       )}
@@ -867,7 +861,7 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
                     <div style={{ fontSize: 13, color: S.sub, marginBottom: 12 }}>{c.desc}</div>
                     {asset && <SparkLine history={asset.history.slice(-30)} color={change >= 0 ? S.teal : S.red} height={44} width="100%" />}
                     <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-                      {asset && <div style={{ background: S.panel2, borderRadius: 6, padding: "5px 10px", fontSize: 11, color: S.sub }}>Mkt Cap: {fmt(asset.price * c.shares)} SC</div>}
+                      {asset && <div style={{ background: S.panel2, borderRadius: 6, padding: "5px 10px", fontSize: 11, color: S.sub }}>Market Maximum Value: {fmt(asset.price * c.shares)} ATC</div>}
                       <div style={{ background: S.panel2, borderRadius: 6, padding: "5px 10px", fontSize: 11, color: S.sub }}>{txCount} transaction{txCount !== 1 ? "s" : ""}</div>
                     </div>
                   </div>
@@ -891,12 +885,12 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
           ) : (
             <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 12, padding: 24 }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: S.text, marginBottom: 4 }}>Register a Company</div>
-              <div style={{ fontSize: 12, color: S.sub, marginBottom: 20 }}>Company will enter the live market simulation. Prices are algorithm-controlled.</div>
+              <div style={{ fontSize: 12, color: S.sub, marginBottom: 20 }}>...</div>
 
               {[
-                ["Company Name",        "name",         "text",   "Skybound Farms Ltd."],
-                ["Founder (IGN)",       "founder",      "text",   "YourName"],
-                ["Ticker Symbol",       "ticker",       "text",   "SBF"],
+                ["Company Name",        "name",         "text",   "Any company name there ✌️😌."],
+                ["Founder (IGN)",       "founder",      "text",   "Your in game name"],
+                ["Ticker Symbol",       "ticker",       "text",   "SYBAU would be a great ticker, innit?"],
               ].map(([label, key, type, ph]) => (
                 <div key={key} style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>{label}</label>
@@ -928,14 +922,14 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
                     style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, boxSizing: "border-box", fontFamily: S.mono }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Initial Price (SC)</label>
+                  <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Initial Price (ATC)</label>
                   <input type="number" min="10" value={form.initialPrice} onChange={e => setForm(p => ({ ...p, initialPrice: e.target.value }))}
                     style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, boxSizing: "border-box", fontFamily: S.mono }} />
                 </div>
               </div>
 
               <Btn variant="buy" onClick={handleRegister} style={{ width: "100%", padding: "11px 0" }}>List Company on Exchange →</Btn>
-              <div style={{ marginTop: 10, fontSize: 11, color: S.dim, textAlign: "center" }}>Prices are simulation-controlled. No manual override possible.</div>
+              <div style={{ marginTop: 10, fontSize: 11, color: S.dim, textAlign: "center" }}>Prices are simulation-controlled.</div>
             </div>
           )}
         </div>
@@ -960,9 +954,9 @@ function AdminApp({ assets, events, transactions, onContest }) {
       <div style={{ borderBottom: `1px solid ${S.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #f59e0b, #ef4444)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚙</div>
-          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>SKYBOUND</span>
-          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>ADMIN</span>
-          <span style={{ background: "#2d1111", color: S.red, fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 700 }}>SYSTEM ONLY</span>
+          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>Skybound</span>
+          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>Admin</span>
+          <span style={{ background: "#2d1111", color: S.red, fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 700 }}>Skibidi</span>
         </div>
         <div style={{ display: "flex", gap: 2 }}>
           {ADMIN_TABS.map(t => (
@@ -1038,7 +1032,7 @@ function AdminApp({ assets, events, transactions, onContest }) {
           </div>
 
           {transactions.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No transactions recorded yet.</div>
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>You're stupid though.</div>
           ) : (
             <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
               <div style={{ display: "grid", gridTemplateColumns: "110px 80px 80px 60px 80px 90px 80px 90px", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${S.border}` }}>
@@ -1102,7 +1096,6 @@ function AdminApp({ assets, events, transactions, onContest }) {
 }
 
 // ─── ADMIN LOGIN MODAL ───────────────────────────────────────────────────────
-// Change ADMIN_PASSWORD below to whatever you want.
 const ADMIN_PASSWORD = "skybound2025";
 
 function AdminLoginModal({ onSuccess, onCancel }) {
@@ -1166,7 +1159,7 @@ function AdminLoginModal({ onSuccess, onCancel }) {
           value={pw}
           onChange={e => { setPw(e.target.value); setErr(""); }}
           onKeyDown={onKey}
-          placeholder="••••••••••••"
+          placeholder="I Know you aren't admin, you know too... "
           style={{
             width: "100%",
             background: S.panel2,
