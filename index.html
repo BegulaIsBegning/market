@@ -812,7 +812,7 @@ function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
             <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? S.panel2 : "none", border: "none", padding: "6px 14px", cursor: "pointer", fontSize: 13, color: tab === t ? S.teal : S.sub, borderRadius: 6, fontFamily: S.font, fontWeight: tab === t ? 600 : 400 }}>{t}</button>
           ))}
         </div>
-        <div style={{ fontSize: 12, color: S.dim }}>company.skybound.at</div>
+
       </div>
 
       {tab === "Directory" && (
@@ -967,7 +967,7 @@ function AdminApp({ assets, events, transactions, onContest }) {
             <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? S.panel2 : "none", border: "none", padding: "6px 14px", cursor: "pointer", fontSize: 13, color: tab === t ? S.amber : S.sub, borderRadius: 6, fontFamily: S.font, fontWeight: tab === t ? 600 : 400 }}>{t}</button>
           ))}
         </div>
-        <div style={{ fontSize: 12, color: S.dim }}>admin.skybound.at</div>
+
       </div>
 
       {tab === "Simulation" && (
@@ -1099,10 +1099,110 @@ function AdminApp({ assets, events, transactions, onContest }) {
   );
 }
 
+// ─── ADMIN LOGIN MODAL ───────────────────────────────────────────────────────
+// Change ADMIN_PASSWORD below to whatever you want.
+const ADMIN_PASSWORD = "skybound2025";
+
+function AdminLoginModal({ onSuccess, onCancel }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [shake, setShake] = useState(false);
+  const inputRef = useRef();
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  function attempt() {
+    if (pw === ADMIN_PASSWORD) {
+      setErr("");
+      onSuccess();
+    } else {
+      setErr("Incorrect password.");
+      setPw("");
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+      inputRef.current?.focus();
+    }
+  }
+
+  function onKey(e) {
+    if (e.key === "Enter") attempt();
+    if (e.key === "Escape") onCancel();
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,8,0.92)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onCancel}>
+      <style>{`
+        @keyframes shake {
+          0%,100%{transform:translateX(0)}
+          20%{transform:translateX(-8px)}
+          40%{transform:translateX(8px)}
+          60%{transform:translateX(-6px)}
+          80%{transform:translateX(6px)}
+        }
+        .admin-modal-shake { animation: shake 0.45s ease; }
+      `}</style>
+      <div
+        onClick={e => e.stopPropagation()}
+        className={shake ? "admin-modal-shake" : ""}
+        style={{ background: S.panel, border: `1px solid ${S.amber}`, borderRadius: 14, width: 380, padding: 32, boxShadow: "0 32px 80px rgba(0,0,0,0.95)" }}
+      >
+        {/* Icon */}
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+          <div style={{ width: 48, height: 48, background: "linear-gradient(135deg, #f59e0b, #ef4444)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>⚙</div>
+        </div>
+
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: S.text, letterSpacing: "0.5px" }}>Admin Access</div>
+          <div style={{ fontSize: 12, color: S.sub, marginTop: 4 }}>Enter the admin password to continue</div>
+        </div>
+
+        <label style={{ fontSize: 11, color: S.sub, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px" }}>Password</label>
+        <input
+          ref={inputRef}
+          type="password"
+          value={pw}
+          onChange={e => { setPw(e.target.value); setErr(""); }}
+          onKeyDown={onKey}
+          placeholder="••••••••••••"
+          style={{
+            width: "100%",
+            background: S.panel2,
+            border: `1px solid ${err ? S.red : S.border}`,
+            borderRadius: 8,
+            color: S.text,
+            padding: "10px 14px",
+            fontSize: 15,
+            fontFamily: S.mono,
+            boxSizing: "border-box",
+            outline: "none",
+            marginBottom: 6,
+            letterSpacing: "3px",
+          }}
+        />
+        {err && (
+          <div style={{ fontSize: 11, color: S.red, marginBottom: 10 }}>⚠ {err}</div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
+          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+          <Btn variant="danger" onClick={attempt} style={{ background: "#1a0f05", borderColor: S.amber, color: S.amber }}>Enter</Btn>
+        </div>
+
+        <div style={{ marginTop: 16, fontSize: 10, color: S.dim, textAlign: "center" }}>
+          Press Enter to submit · Esc to cancel
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ROOT APP ─────────────────────────────────────────────────────────────────
 function App() {
   const [view, setView] = useState("market");
   const [playerName] = useState("PlayerOne");
+  const [adminAuthed, setAdminAuthed] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
 
   // Registered companies (empty by default — no pre-seeded data)
   const [registeredAssets, setRegisteredAssets] = useState([]);
@@ -1131,37 +1231,104 @@ function App() {
     setTransactions(prev => {
       const idx = prev.findIndex(t => t.id === txId);
       if (idx === -1) return prev;
-
       const original = prev[idx];
-      // Create reversal entry
       const reversal = createReversalTransaction(original);
-      // Mark original as contested then reversed
       const updated = contestTransaction(original, { by, reason });
       const finalOriginal = reverseTransaction(updated, reversal.id);
-
       const next = [...prev];
       next[idx] = finalOriginal;
       return [...next, reversal];
     });
   }
 
+  function handleAdminClick() {
+    if (adminAuthed) {
+      setView("admin");
+    } else {
+      setShowAdminLogin(true);
+    }
+  }
+
+  function handleAdminSuccess() {
+    setAdminAuthed(true);
+    setShowAdminLogin(false);
+    setView("admin");
+  }
+
+  function handleAdminLogout() {
+    setAdminAuthed(false);
+    setView("market");
+  }
+
   return (
     <div>
-      {/* Route bar */}
-      <div style={{ background: "#04080f", borderBottom: `1px solid ${S.border2}`, padding: "5px 16px", display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 10, color: S.dim }}>Demo routing:</span>
-        {[
-          ["market",  "market.skybound.at"],
-          ["company", "company.skybound.at"],
-          ["admin",   "admin.skybound.at"],
-        ].map(([v, label]) => (
-          <button key={v} onClick={() => setView(v)} style={{ background: view === v ? S.panel2 : "none", border: `1px solid ${view === v ? "#1e3a5f" : S.border2}`, borderRadius: 4, padding: "3px 10px", cursor: "pointer", fontSize: 11, color: view === v ? S.blue : S.dim, fontFamily: S.font }}>
-            {label}
+      {/* Top nav */}
+      <div style={{ background: "#04080f", borderBottom: `1px solid ${S.border}`, padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 44 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Market + Companies: regular nav buttons */}
+          {[
+            ["market",  "◈  Market",    S.blue],
+            ["company", "◉  Companies", S.teal],
+          ].map(([v, label, activeColor]) => (
+            <button key={v} onClick={() => setView(v)} style={{
+              background: view === v ? S.panel : "none",
+              border: `1px solid ${view === v ? S.border : "transparent"}`,
+              borderRadius: 6,
+              padding: "5px 14px",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: view === v ? 700 : 400,
+              color: view === v ? activeColor : S.dim,
+              fontFamily: S.font,
+              transition: "all 0.15s",
+            }}>
+              {label}
+            </button>
+          ))}
+
+          {/* Admin: gated button */}
+          <button onClick={handleAdminClick} style={{
+            background: view === "admin" ? S.panel : "none",
+            border: `1px solid ${view === "admin" ? S.border : "transparent"}`,
+            borderRadius: 6,
+            padding: "5px 14px",
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: view === "admin" ? 700 : 400,
+            color: view === "admin" ? S.amber : S.dim,
+            fontFamily: S.font,
+            transition: "all 0.15s",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+          }}>
+            ⚙  Admin
+            {!adminAuthed && (
+              <span style={{ fontSize: 10, color: S.dim, marginLeft: 2 }}>🔒</span>
+            )}
           </button>
-        ))}
-        <span style={{ marginLeft: "auto", fontSize: 10, color: S.dim }}>
-          Player: <span style={{ color: S.teal, fontWeight: 700 }}>{playerName}</span>
-        </span>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {adminAuthed && (
+            <button onClick={handleAdminLogout} style={{
+              background: "#2d1f00",
+              border: `1px solid ${S.amber}`,
+              borderRadius: 5,
+              padding: "3px 10px",
+              cursor: "pointer",
+              fontSize: 10,
+              color: S.amber,
+              fontFamily: S.font,
+              fontWeight: 600,
+            }}>
+              Lock Admin
+            </button>
+          )}
+          <div style={{ fontFamily: S.mono, fontSize: 11, color: S.dim }}>
+            Player: <span style={{ color: S.teal, fontWeight: 700 }}>{playerName}</span>
+          </div>
+        </div>
       </div>
 
       {view === "market" && (
@@ -1183,12 +1350,19 @@ function App() {
           transactions={transactions}
         />
       )}
-      {view === "admin" && (
+      {view === "admin" && adminAuthed && (
         <AdminApp
           assets={assets}
           events={events}
           transactions={transactions}
           onContest={handleContest}
+        />
+      )}
+
+      {showAdminLogin && (
+        <AdminLoginModal
+          onSuccess={handleAdminSuccess}
+          onCancel={() => setShowAdminLogin(false)}
         />
       )}
     </div>
