@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skybound Economy</title>
+  <meta name="description" content="Skybound Minecraft Server Investment Platform — live market simulation, company registry, transaction ledger." />
+
+  <!-- React 18 + Babel standalone (no build step required) -->
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #060d1a; color: #e2e8f0; }
+    #root { min-height: 100vh; }
+    /* native scrollbar tint */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #060d1a; }
+    ::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 3px; }
+    /* remove default number input spinners */
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    input[type=number] { -moz-appearance: textfield; }
+    select option { background: #0f1929; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef } = React;
+
+
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const SECTORS = ["Farming", "Trade", "Services", "Mining", "Crafting"];
+
+const EVENT_TEMPLATES = [
+  { type: "boom",   title: "Market Boom",        msg: "Investor confidence surges. Broad rally underway.",                sector: null,       mult: 1.06 },
+  { type: "crash",  title: "Market Correction",   msg: "Panic selling triggers a broad pullback. Volatility elevated.",    sector: null,       mult: 0.94 },
+  { type: "sector", title: "Farming Surge",       msg: "Seasonal harvest event drives Farming stocks higher.",             sector: "Farming",  mult: 1.12 },
+  { type: "sector", title: "Mining Rush",         msg: "New deep-cave discovery sparks Mining sector frenzy.",             sector: "Mining",   mult: 1.15 },
+  { type: "sector", title: "Trade Slump",         msg: "Supply chain disruptions weigh on Trade sector earnings.",         sector: "Trade",    mult: 0.88 },
+  { type: "hype",   title: "Hype Cycle",          msg: "Speculation runs wild — a mystery asset rockets on no news.",      sector: null,       mult: 1.0  },
+  { type: "sector", title: "Services Boom",       msg: "Player activity spike benefits the Services sector.",              sector: "Services", mult: 1.09 },
+  { type: "crash",  title: "Creeper Incident",    msg: "Infrastructure damage report spooks the market.",                  sector: null,       mult: 0.96 },
+  { type: "sector", title: "Crafting Festival",   msg: "Seasonal crafting event floods demand for artisan goods.",         sector: "Crafting", mult: 1.11 },
+];
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function nanoid(len = 8) {
+  return Math.random().toString(36).slice(2, 2 + len).toUpperCase();
+}
+
+function randomWalk(price, intensity = 1) {
+  const drift = (Math.random() - 0.48) * intensity * 0.03;
+  const shock = (Math.random() - 0.5) * intensity * 0.015;
+  return Math.max(10, price * (1 + drift + shock));
+}
+
+function pct(history) {
+  if (history.length < 2) return 0;
+  return ((history[history.length - 1] - history[0]) / history[0]) * 100;
+}
+
+function fmt(n) {
+  return (n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtPct(n) {
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+}
+
+function nowUnix() {
+  return Math.floor(Date.now() / 1000);
+}
+
+// ─── TRANSACTION ENGINE ───────────────────────────────────────────────────────
+function createTransaction({ buyer, seller = "SYSTEM", asset, quantity, pricePerShare }) {
+  const totalValue = parseFloat((quantity * pricePerShare).toFixed(2));
+  return {
+    id: "tx_" + nanoid(6),
+    buyer,
+    seller,
+    asset,
+    quantity,
+    price_per_share: parseFloat(pricePerShare.toFixed(2)),
+    asset_price_snapshot: parseFloat(pricePerShare.toFixed(2)),
+    total_value: totalValue,
+    timestamp: nowUnix(),
+    status: "active",
+    contested_by: null,
+    contest_reason: null,
+    reversal_transaction_id: null,
+  };
+}
+
+function contestTransaction(tx, { by = "ADMIN", reason = "" }) {
+  return { ...tx, status: "contested", contested_by: by, contest_reason: reason };
+}
+
+function reverseTransaction(tx, reversalId) {
+  return { ...tx, status: "reversed", reversal_transaction_id: reversalId };
+}
+
+function createReversalTransaction(originalTx) {
+  // Reversal: seller becomes buyer, buyer becomes seller, same values
+  return {
+    id: "tx_" + nanoid(6),
+    buyer: originalTx.seller,
+    seller: originalTx.buyer,
+    asset: originalTx.asset,
+    quantity: originalTx.quantity,
+    price_per_share: originalTx.price_per_share,
+    asset_price_snapshot: originalTx.asset_price_snapshot,
+    total_value: originalTx.total_value,
+    timestamp: nowUnix(),
+    status: "active",
+    contested_by: null,
+    contest_reason: `Reversal of ${originalTx.id}`,
+    reversal_transaction_id: originalTx.id,
+  };
+}
+
+// Derive portfolio from active (non-reversed) transactions only
+function derivePortfolio(transactions, playerName) {
+  const holdings = {};
+  for (const tx of transactions) {
+    if (tx.status === "reversed") continue;
+    if (tx.buyer === playerName) {
+      holdings[tx.asset] = (holdings[tx.asset] || 0) + tx.quantity;
+    }
+    if (tx.seller === playerName) {
+      holdings[tx.asset] = (holdings[tx.asset] || 0) - tx.quantity;
+    }
+  }
+  // Clamp negatives to 0
+  for (const k in holdings) if (holdings[k] < 0) holdings[k] = 0;
+  return holdings;
+}
+
+// Compute total SC balance from active transactions (simplified: net SC flow)
+function deriveBalance(transactions, playerName, startBalance = 10000) {
+  let balance = startBalance;
+  for (const tx of transactions) {
+    if (tx.status === "reversed") continue;
+    if (tx.buyer === playerName) balance -= tx.total_value;
+    if (tx.seller === playerName && tx.seller !== "SYSTEM") balance += tx.total_value;
+  }
+  return balance;
+}
+
+// ─── MARKET ENGINE ────────────────────────────────────────────────────────────
+function useEconomyEngine(registeredAssets) {
+  const [assets, setAssets] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [activeEvent, setActiveEvent] = useState(null);
+  const tickRef = useRef(0);
+  const prevRegistered = useRef([]);
+
+  // Sync new registered assets into live market
+  useEffect(() => {
+    const newOnes = registeredAssets.filter(
+      r => !prevRegistered.current.find(p => p.id === r.id)
+    );
+    if (newOnes.length > 0) {
+      setAssets(prev => [
+        ...prev,
+        ...newOnes.map(a => ({
+          ...a,
+          price: a.initialPrice,
+          history: Array.from({ length: 30 }, (_, i) => {
+            let p = a.initialPrice;
+            for (let j = 0; j < 30 - i; j++) p = Math.max(10, p / (1 + (Math.random() - 0.48) * 0.02));
+            return parseFloat(p.toFixed(2));
+          }),
+        })),
+      ]);
+      prevRegistered.current = [...prevRegistered.current, ...newOnes];
+    }
+  }, [registeredAssets]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      tickRef.current++;
+      const tick = tickRef.current;
+      let currentEvent = null;
+
+      if (tick % 40 === 0) {
+        const ev = EVENT_TEMPLATES[Math.floor(Math.random() * EVENT_TEMPLATES.length)];
+        const newEvent = { ...ev, id: tick, time: new Date() };
+        setEvents(prev => [newEvent, ...prev].slice(0, 30));
+        setActiveEvent(newEvent);
+        currentEvent = newEvent;
+        setTimeout(() => setActiveEvent(null), 6000);
+      }
+
+      setAssets(prev =>
+        prev.map(asset => {
+          let mult = 1;
+          if (currentEvent) {
+            if (currentEvent.type === "hype" && Math.random() < 0.15) mult = 1 + Math.random() * 0.2;
+            else if (currentEvent.sector === null && currentEvent.type !== "hype") mult = currentEvent.mult;
+            else if (currentEvent.sector === asset.sector) mult = currentEvent.mult;
+          }
+          const newPrice = parseFloat((randomWalk(asset.price) * mult).toFixed(2));
+          return { ...asset, price: newPrice, history: [...asset.history.slice(-79), newPrice] };
+        })
+      );
+    }, 1200);
+    return () => clearInterval(interval);
+  }, []);
+
+  return { assets, setAssets, events, activeEvent };
+}
+
+// ─── UI COMPONENTS ────────────────────────────────────────────────────────────
+const S = {
+  bg: "#060d1a",
+  panel: "#0a1628",
+  panel2: "#0f1929",
+  border: "#1e2a3a",
+  border2: "#0f1929",
+  text: "#e2e8f0",
+  sub: "#475569",
+  dim: "#334155",
+  green: "#22d3a0",
+  red: "#f87171",
+  blue: "#60a5fa",
+  purple: "#a78bfa",
+  amber: "#f59e0b",
+  teal: "#34d399",
+  font: "'Syne', 'DM Sans', -apple-system, sans-serif",
+  mono: "'JetBrains Mono', monospace",
+};
+
+function Badge({ children, type = "neutral" }) {
+  const styles = {
+    neutral:   { background: "#1e2a3a", color: "#94a3b8" },
+    up:        { background: "#052e23", color: "#22d3a0" },
+    down:      { background: "#2d1111", color: "#f87171" },
+    event:     { background: "#1a1240", color: "#a78bfa" },
+    sector:    { background: "#0f2a1f", color: "#34d399" },
+    contested: { background: "#2d1f00", color: "#f59e0b" },
+    reversed:  { background: "#1a1a2e", color: "#60a5fa" },
+    active:    { background: "#052e23", color: "#22d3a0" },
+  };
+  const st = styles[type] || styles.neutral;
+  return (
+    <span style={{ ...st, fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 600, whiteSpace: "nowrap", letterSpacing: "0.5px", textTransform: "uppercase" }}>
+      {children}
+    </span>
+  );
+}
+
+function MiniChart({ history, up }) {
+  const w = 80, h = 32;
+  const min = Math.min(...history), max = Math.max(...history);
+  const range = max - min || 1;
+  const pts = history.map((v, i) => `${(i / (history.length - 1)) * w},${h - ((v - min) / range) * h}`).join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
+      <polyline points={pts} fill="none" stroke={up ? S.green : S.red} strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SparkLine({ history, color = S.blue, height = 60, width = "100%" }) {
+  if (!history || history.length < 2) return <div style={{ height }} />;
+  const min = Math.min(...history), max = Math.max(...history);
+  const range = max - min || 1;
+  const W = 300, H = height;
+  const pts = history.map((v, i) => `${(i / (history.length - 1)) * W},${H - ((v - min) / range) * (H - 4) - 2}`).join(" ");
+  const areaEnd = `${W},${H} 0,${H}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width, height, display: "block" }}>
+      <defs>
+        <linearGradient id={`g-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={`${pts} ${areaEnd}`} fill={`url(#g-${color.replace("#", "")})`} />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Btn({ children, onClick, variant = "ghost", disabled = false, style = {} }) {
+  const base = { border: "none", borderRadius: 6, padding: "9px 18px", cursor: disabled ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 600, fontFamily: S.font, transition: "all 0.15s", opacity: disabled ? 0.4 : 1, ...style };
+  const variants = {
+    ghost:   { background: S.panel2, color: S.sub, border: `1px solid ${S.border}` },
+    primary: { background: "#1e3a5f", color: S.blue, border: `1px solid ${S.blue}` },
+    buy:     { background: "#052e23", color: S.green, border: `1px solid ${S.green}` },
+    sell:    { background: "#2d1111", color: S.red, border: `1px solid ${S.red}` },
+    danger:  { background: "#2d1f00", color: S.amber, border: `1px solid ${S.amber}` },
+  };
+  return <button onClick={disabled ? undefined : onClick} style={{ ...base, ...variants[variant] }}>{children}</button>;
+}
+
+// ─── ASSET ROW ────────────────────────────────────────────────────────────────
+function AssetRow({ asset, onClick, watched, onWatch }) {
+  const change = pct(asset.history);
+  const up = change >= 0;
+  return (
+    <div
+      onClick={onClick}
+      style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px 80px 32px", alignItems: "center", gap: 12, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${S.border2}`, transition: "background 0.15s" }}
+      onMouseEnter={e => (e.currentTarget.style.background = S.panel2)}
+      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+    >
+      <div>
+        <span style={{ fontWeight: 700, fontSize: 13, color: S.text, marginRight: 8, fontFamily: S.mono }}>{asset.id}</span>
+        <span style={{ fontSize: 12, color: S.sub }}>{asset.name}</span>
+        <div style={{ marginTop: 3 }}><Badge type="neutral">{asset.sector}</Badge></div>
+      </div>
+      <MiniChart history={asset.history.slice(-20)} up={up} />
+      <div style={{ textAlign: "right" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: S.text, fontFamily: S.mono }}>{fmt(asset.price)}</div>
+        <div style={{ fontSize: 10, color: S.dim }}>SC/share</div>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: up ? S.green : S.red }}>{fmtPct(change)}</span>
+      </div>
+      <button onClick={e => { e.stopPropagation(); onWatch(asset.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: watched ? S.amber : S.dim, fontSize: 16, padding: 0 }}>★</button>
+    </div>
+  );
+}
+
+// ─── ASSET MODAL ──────────────────────────────────────────────────────────────
+function AssetModal({ asset, onClose, transactions, onTrade, playerName }) {
+  const [tab, setTab] = useState("chart");
+  const [qty, setQty] = useState(10);
+  const [qtyErr, setQtyErr] = useState("");
+  const change = pct(asset.history);
+  const up = change >= 0;
+
+  const portfolio = derivePortfolio(transactions, playerName);
+  const balance = deriveBalance(transactions, playerName);
+  const owned = portfolio[asset.id] || 0;
+
+  function handleBuy() {
+    const cost = qty * asset.price;
+    if (cost > balance) { setQtyErr("Insufficient SC balance."); return; }
+    setQtyErr("");
+    onTrade(asset, "buy", qty);
+    onClose();
+  }
+  function handleSell() {
+    if (owned < qty) { setQtyErr("Not enough shares to sell."); return; }
+    setQtyErr("");
+    onTrade(asset, "sell", qty);
+    onClose();
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,8,0.88)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 14, width: 520, maxHeight: "90vh", overflow: "auto", boxShadow: "0 32px 80px rgba(0,0,0,0.9)" }}>
+        <div style={{ padding: "20px 24px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 22, fontWeight: 800, color: S.text, fontFamily: S.mono }}>{asset.id}</span>
+                <Badge type={up ? "up" : "down"}>{fmtPct(change)}</Badge>
+                <Badge type="neutral">{asset.sector}</Badge>
+              </div>
+              <div style={{ fontSize: 13, color: S.sub, marginTop: 2 }}>{asset.name}</div>
+            </div>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: S.sub, fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
+          </div>
+          <div style={{ fontSize: 32, fontWeight: 800, color: S.text, margin: "12px 0 4px", fontFamily: S.mono }}>{fmt(asset.price)} <span style={{ fontSize: 13, fontWeight: 400, color: S.sub }}>SC</span></div>
+          <div style={{ fontSize: 12, color: S.sub }}>{asset.desc}</div>
+        </div>
+
+        <div style={{ padding: "14px 24px 0", borderBottom: `1px solid ${S.border}`, display: "flex", gap: 2 }}>
+          {["chart", "trade", "info"].map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", padding: "6px 14px", cursor: "pointer", fontSize: 13, color: tab === t ? S.blue : S.sub, borderBottom: tab === t ? `2px solid ${S.blue}` : "2px solid transparent", transition: "all 0.15s", textTransform: "capitalize", fontFamily: S.font }}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding: 24 }}>
+          {tab === "chart" && (
+            <div>
+              <SparkLine history={asset.history} color={up ? S.green : S.red} height={120} width="100%" />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 12, color: S.sub }}>
+                <span>Low: {fmt(Math.min(...asset.history))}</span>
+                <span>High: {fmt(Math.max(...asset.history))}</span>
+                <span>Ticks: {asset.history.length}</span>
+              </div>
+            </div>
+          )}
+          {tab === "trade" && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                <div style={{ background: S.panel2, borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 11, color: S.sub, marginBottom: 4 }}>Your shares</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: S.text, fontFamily: S.mono }}>{owned}</div>
+                  <div style={{ fontSize: 11, color: S.sub }}>≈ {fmt(owned * asset.price)} SC</div>
+                </div>
+                <div style={{ background: S.panel2, borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 11, color: S.sub, marginBottom: 4 }}>SC Balance</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: balance > 0 ? S.green : S.red, fontFamily: S.mono }}>{fmt(balance)}</div>
+                </div>
+              </div>
+              <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Quantity</label>
+              <div style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "center" }}>
+                <input type="number" min="1" value={qty} onChange={e => { setQty(Math.max(1, parseInt(e.target.value) || 1)); setQtyErr(""); }}
+                  style={{ background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 14, width: 100, fontFamily: S.mono }} />
+                <span style={{ fontSize: 12, color: S.sub }}>= {fmt(qty * asset.price)} SC total</span>
+              </div>
+              {qtyErr && <div style={{ fontSize: 11, color: S.red, marginBottom: 8 }}>⚠ {qtyErr}</div>}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+                <Btn variant="buy" onClick={handleBuy}>BUY {qty} shares</Btn>
+                <Btn variant="sell" onClick={handleSell} disabled={owned < qty}>SELL {qty} shares</Btn>
+              </div>
+              <div style={{ marginTop: 12, fontSize: 11, color: S.dim }}>Trades are recorded as structured transactions with full audit history.</div>
+            </div>
+          )}
+          {tab === "info" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 13 }}>
+              {[
+                ["Ticker",      asset.id],
+                ["Sector",      asset.sector],
+                ["Shares",      (asset.shares || 0).toLocaleString()],
+                ["Market Cap",  fmt((asset.shares || 0) * asset.price) + " SC"],
+                ["52wk Low",    fmt(Math.min(...asset.history))],
+                ["52wk High",   fmt(Math.max(...asset.history))],
+              ].map(([k, v]) => (
+                <div key={k} style={{ background: S.panel2, borderRadius: 6, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 10, color: S.sub, marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.5px" }}>{k}</div>
+                  <div style={{ fontWeight: 700, color: S.text, fontFamily: S.mono }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONTEST MODAL ────────────────────────────────────────────────────────────
+function ContestModal({ tx, onClose, onContest }) {
+  const [reason, setReason] = useState("");
+  const [by, setBy] = useState("ADMIN");
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,8,0.88)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: S.panel, border: `1px solid ${S.amber}`, borderRadius: 12, width: 440, padding: 24, boxShadow: "0 24px 64px rgba(0,0,0,0.9)" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: S.amber, marginBottom: 4 }}>⚠ Contest Transaction</div>
+        <div style={{ fontSize: 12, color: S.sub, marginBottom: 16 }}>
+          This will mark <span style={{ color: S.text, fontFamily: S.mono }}>{tx.id}</span> as contested and create a reversal entry. Original record is never deleted.
+        </div>
+        <div style={{ background: S.panel2, borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {[["Asset", tx.asset], ["Buyer", tx.buyer], ["Qty", tx.quantity], ["Total", fmt(tx.total_value) + " SC"]].map(([k, v]) => (
+              <div key={k}><span style={{ color: S.sub }}>{k}: </span><span style={{ color: S.text, fontFamily: S.mono }}>{v}</span></div>
+            ))}
+          </div>
+        </div>
+        <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Contested By</label>
+        <input value={by} onChange={e => setBy(e.target.value)} style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, marginBottom: 12, boxSizing: "border-box" }} />
+        <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Reason</label>
+        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} placeholder="e.g. Duplicate trade, player dispute, system error..." style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, resize: "vertical", boxSizing: "border-box", marginBottom: 16, fontFamily: S.font }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="danger" onClick={() => { onContest(tx.id, by, reason); onClose(); }} style={{ flex: 1 }}>Confirm Contest + Reverse</Btn>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MARKET APP ───────────────────────────────────────────────────────────────
+const NAV_TABS = ["Market", "Portfolio", "Transactions", "Watchlist", "News"];
+
+function MarketApp({ assets, events, activeEvent, transactions, onTrade, onContest, playerName }) {
+  const [tab, setTab] = useState("Market");
+  const [selected, setSelected] = useState(null);
+  const [watchlist, setWatchlist] = useState(new Set());
+  const [filter, setFilter] = useState("All");
+  const [txFilter, setTxFilter] = useState("all");
+  const [contestTarget, setContestTarget] = useState(null);
+
+  const toggleWatch = id => setWatchlist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const portfolio = derivePortfolio(transactions, playerName);
+  const balance = deriveBalance(transactions, playerName);
+  const portfolioValue = Object.entries(portfolio).reduce((sum, [id, qty]) => {
+    const a = assets.find(x => x.id === id);
+    return sum + (a ? a.price * qty : 0);
+  }, 0);
+
+  const displayedAssets = tab === "Watchlist"
+    ? assets.filter(a => watchlist.has(a.id))
+    : filter === "All" ? assets : assets.filter(a => a.sector === filter);
+
+  const filteredTxs = txFilter === "all"
+    ? transactions
+    : transactions.filter(t => t.status === txFilter);
+
+  const myTxs = transactions.filter(t => t.buyer === playerName || t.seller === playerName);
+
+  // P&L: sum of sell value minus buy cost for active/contested
+  const realizedPnl = transactions
+    .filter(t => t.status !== "reversed" && (t.buyer === playerName || t.seller === playerName))
+    .reduce((sum, t) => {
+      if (t.buyer === playerName) return sum - t.total_value;
+      if (t.seller === playerName && t.seller !== "SYSTEM") return sum + t.total_value;
+      return sum;
+    }, 0);
+
+  const statusColor = { active: S.green, contested: S.amber, reversed: S.blue };
+
+  return (
+    <div style={{ minHeight: "100vh", background: S.bg, color: S.text, fontFamily: S.font }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');`}</style>
+
+      {activeEvent && (
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 200, background: S.panel, border: `1px solid ${S.purple}`, borderRadius: 10, padding: "12px 16px", maxWidth: 280, boxShadow: "0 8px 32px rgba(0,0,0,0.7)", animation: "slideIn 0.3s ease" }}>
+          <style>{`@keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
+          <div style={{ fontSize: 10, color: S.purple, fontWeight: 700, marginBottom: 4, letterSpacing: 1 }}>📡 MARKET EVENT</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: S.text, marginBottom: 2 }}>{activeEvent.title}</div>
+          <div style={{ fontSize: 12, color: S.sub }}>{activeEvent.msg}</div>
+        </div>
+      )}
+
+      {/* Nav */}
+      <div style={{ borderBottom: `1px solid ${S.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #3b82f6, #8b5cf6)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>◈</div>
+          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>SKYBOUND</span>
+          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>MARKET</span>
+        </div>
+        <div style={{ display: "flex", gap: 2 }}>
+          {NAV_TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? S.panel2 : "none", border: "none", padding: "6px 14px", cursor: "pointer", fontSize: 13, color: tab === t ? S.blue : S.sub, borderRadius: 6, transition: "all 0.15s", fontFamily: S.font, fontWeight: tab === t ? 600 : 400 }}>{t}</button>
+          ))}
+        </div>
+        <div style={{ fontFamily: S.mono, fontSize: 12, color: S.sub }}>
+          <span style={{ color: S.dim }}>bal </span><span style={{ color: balance >= 0 ? S.green : S.red, fontWeight: 700 }}>{fmt(balance)} SC</span>
+          <span style={{ color: S.dim, marginLeft: 12 }}>port </span><span style={{ color: S.blue, fontWeight: 700 }}>{fmt(portfolioValue)} SC</span>
+        </div>
+      </div>
+
+      {/* MARKET TAB */}
+      {tab === "Market" && (
+        <div style={{ padding: 24 }}>
+          {assets.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "80px 0", color: S.dim }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>◈</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: S.sub, marginBottom: 8 }}>No assets listed yet</div>
+              <div style={{ fontSize: 13, color: S.dim }}>Register a company on the Companies page to list the first asset.</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+                {assets.slice(0, 4).map(a => {
+                  const c = pct(a.history);
+                  return (
+                    <div key={a.id} onClick={() => setSelected(a)} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 14, cursor: "pointer", transition: "border-color 0.15s" }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = S.border2 = "#334155")}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = S.border)}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: S.sub, fontFamily: S.mono }}>{a.id}</span>
+                        <span style={{ fontSize: 11, color: c >= 0 ? S.green : S.red, fontWeight: 600 }}>{fmtPct(c)}</span>
+                      </div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: S.text, fontFamily: S.mono }}>{fmt(a.price)}</div>
+                      <SparkLine history={a.history.slice(-20)} color={c >= 0 ? S.green : S.red} height={32} width="100%" />
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+                {["All", ...SECTORS].map(s => (
+                  <button key={s} onClick={() => setFilter(s)} style={{ background: filter === s ? "#1e3a5f" : S.panel, border: `1px solid ${filter === s ? S.blue : S.border}`, borderRadius: 20, padding: "4px 14px", cursor: "pointer", fontSize: 12, color: filter === s ? S.blue : S.sub, fontFamily: S.font }}>{s}</button>
+                ))}
+              </div>
+
+              <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px 80px 32px", gap: 12, padding: "8px 16px", borderBottom: `1px solid ${S.border}` }}>
+                  {["Asset", "Trend", "Price", "Change", ""].map((h, i) => (
+                    <div key={i} style={{ fontSize: 10, color: S.dim, fontWeight: 700, textAlign: i > 1 ? "right" : "left", textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</div>
+                  ))}
+                </div>
+                {displayedAssets.map(a => (
+                  <AssetRow key={a.id} asset={a} onClick={() => setSelected(a)} watched={watchlist.has(a.id)} onWatch={toggleWatch} />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* PORTFOLIO TAB */}
+      {tab === "Portfolio" && (
+        <div style={{ padding: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+            {[
+              ["SC Balance",    fmt(balance) + " SC",       balance >= 0 ? S.green : S.red],
+              ["Portfolio Val", fmt(portfolioValue) + " SC", S.blue],
+              ["Holdings",      Object.values(portfolio).filter(v => v > 0).length + " assets", S.purple],
+              ["Net P&L",       (realizedPnl >= 0 ? "+" : "") + fmt(realizedPnl) + " SC", realizedPnl >= 0 ? S.green : S.red],
+            ].map(([label, val, col]) => (
+              <div key={label} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16 }}>
+                <div style={{ fontSize: 11, color: S.sub, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: col, fontFamily: S.mono }}>{val}</div>
+              </div>
+            ))}
+          </div>
+
+          {Object.values(portfolio).every(v => v <= 0) ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No holdings yet. Buy some shares from the Market tab.</div>
+          ) : (
+            <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: `1px solid ${S.border}`, fontSize: 12, fontWeight: 700, color: S.sub, textTransform: "uppercase", letterSpacing: "0.5px" }}>Holdings</div>
+              {Object.entries(portfolio).filter(([, v]) => v > 0).map(([id, qty]) => {
+                const a = assets.find(x => x.id === id);
+                if (!a) return null;
+                const c = pct(a.history);
+                const costBasis = transactions
+                  .filter(t => t.buyer === playerName && t.asset === id && t.status !== "reversed")
+                  .reduce((sum, t) => sum + t.total_value, 0);
+                const currentVal = a.price * qty;
+                const pnl = currentVal - costBasis;
+                return (
+                  <div key={id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", alignItems: "center", gap: 16, padding: "12px 16px", borderBottom: `1px solid ${S.border2}` }}>
+                    <div>
+                      <span style={{ fontWeight: 700, color: S.text, marginRight: 8, fontFamily: S.mono }}>{id}</span>
+                      <span style={{ fontSize: 12, color: S.sub }}>{a.name} · {qty} shares</span>
+                    </div>
+                    <div style={{ fontFamily: S.mono, color: S.text, fontSize: 13 }}>{fmt(currentVal)} SC</div>
+                    <div style={{ fontFamily: S.mono, fontSize: 12, color: pnl >= 0 ? S.green : S.red }}>{pnl >= 0 ? "+" : ""}{fmt(pnl)}</div>
+                    <Badge type={c >= 0 ? "up" : "down"}>{fmtPct(c)}</Badge>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TRANSACTIONS TAB */}
+      {tab === "Transactions" && (
+        <div style={{ padding: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+            {[
+              ["Active",    transactions.filter(t => t.status === "active").length,    S.green],
+              ["Contested", transactions.filter(t => t.status === "contested").length, S.amber],
+              ["Reversed",  transactions.filter(t => t.status === "reversed").length,  S.blue],
+            ].map(([label, count, col]) => (
+              <div key={label} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: S.sub, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: col, fontFamily: S.mono }}>{count}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            {["all", "active", "contested", "reversed"].map(f => (
+              <button key={f} onClick={() => setTxFilter(f)} style={{ background: txFilter === f ? "#1e3a5f" : S.panel, border: `1px solid ${txFilter === f ? S.blue : S.border}`, borderRadius: 20, padding: "4px 14px", cursor: "pointer", fontSize: 12, color: txFilter === f ? S.blue : S.sub, fontFamily: S.font, textTransform: "capitalize" }}>{f}</button>
+            ))}
+          </div>
+
+          {filteredTxs.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No transactions yet.</div>
+          ) : (
+            <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "110px 90px 90px 60px 80px 90px 80px 80px", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${S.border}` }}>
+                {["TX ID", "Asset", "Buyer", "Qty", "Price/sh", "Total", "Status", "Action"].map((h, i) => (
+                  <div key={i} style={{ fontSize: 10, color: S.dim, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</div>
+                ))}
+              </div>
+              {filteredTxs.map(tx => (
+                <div key={tx.id} style={{ display: "grid", gridTemplateColumns: "110px 90px 90px 60px 80px 90px 80px 80px", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${S.border2}`, alignItems: "center", opacity: tx.status === "reversed" ? 0.55 : 1 }}>
+                  <div style={{ fontFamily: S.mono, fontSize: 11, color: S.blue }}>{tx.id}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text, fontWeight: 700 }}>{tx.asset}</div>
+                  <div style={{ fontSize: 12, color: S.sub }}>{tx.buyer}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text }}>{tx.quantity}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.sub }}>{fmt(tx.price_per_share)}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text, fontWeight: 700 }}>{fmt(tx.total_value)}</div>
+                  <Badge type={tx.status === "active" ? "active" : tx.status === "contested" ? "contested" : "reversed"}>{tx.status}</Badge>
+                  {tx.status === "active" ? (
+                    <button onClick={() => setContestTarget(tx)} style={{ background: "#2d1f00", border: `1px solid ${S.amber}`, borderRadius: 4, color: S.amber, padding: "4px 8px", cursor: "pointer", fontSize: 10, fontWeight: 700, fontFamily: S.font }}>CONTEST</button>
+                  ) : tx.status === "contested" ? (
+                    <span style={{ fontSize: 10, color: S.sub }}>Pending</span>
+                  ) : (
+                    <span style={{ fontSize: 10, color: S.dim }}>↩ {tx.reversal_transaction_id?.slice(0, 10) || "–"}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Contest reason details */}
+          {transactions.filter(t => t.contested_by).length > 0 && (
+            <div style={{ marginTop: 20, background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: `1px solid ${S.border}`, fontSize: 12, fontWeight: 700, color: S.amber }}>Contest Audit Log</div>
+              {transactions.filter(t => t.contested_by).map(tx => (
+                <div key={tx.id} style={{ padding: "10px 16px", borderBottom: `1px solid ${S.border2}`, fontSize: 12 }}>
+                  <span style={{ fontFamily: S.mono, color: S.blue }}>{tx.id}</span>
+                  <span style={{ color: S.sub, margin: "0 8px" }}>by</span>
+                  <span style={{ color: S.amber }}>{tx.contested_by}</span>
+                  {tx.contest_reason && <span style={{ color: S.sub, marginLeft: 8 }}>— {tx.contest_reason}</span>}
+                  <span style={{ float: "right", color: S.dim }}>{new Date(tx.timestamp * 1000).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* WATCHLIST TAB */}
+      {tab === "Watchlist" && (
+        <div style={{ padding: 24 }}>
+          {watchlist.size === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No assets on watchlist. Click ★ to add.</div>
+          ) : (
+            <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+              {assets.filter(a => watchlist.has(a.id)).map(a => (
+                <AssetRow key={a.id} asset={a} onClick={() => setSelected(a)} watched={true} onWatch={toggleWatch} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* NEWS TAB */}
+      {tab === "News" && (
+        <div style={{ padding: 24, maxWidth: 600 }}>
+          {events.length === 0 ? (
+            <div style={{ color: S.dim, textAlign: "center", padding: 40 }}>Waiting for market events…</div>
+          ) : events.map((ev, i) => (
+            <div key={ev.id || i} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16, marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <Badge type={ev.type === "boom" || ev.type === "sector" ? "sector" : ev.type === "crash" ? "down" : "event"}>{ev.type}</Badge>
+                <span style={{ fontSize: 10, color: S.dim }}>{ev.time?.toLocaleTimeString()}</span>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: S.text, marginBottom: 4 }}>{ev.title}</div>
+              <div style={{ fontSize: 12, color: S.sub }}>{ev.msg}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <AssetModal
+          asset={selected}
+          onClose={() => setSelected(null)}
+          transactions={transactions}
+          onTrade={onTrade}
+          playerName={playerName}
+        />
+      )}
+
+      {contestTarget && (
+        <ContestModal
+          tx={contestTarget}
+          onClose={() => setContestTarget(null)}
+          onContest={onContest}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── COMPANY APP ──────────────────────────────────────────────────────────────
+const COMPANY_TABS = ["Directory", "Register"];
+
+function CompanyApp({ assets, registeredAssets, onRegister, transactions }) {
+  const [tab, setTab] = useState("Directory");
+  const [form, setForm] = useState({ name: "", ticker: "", sector: "Farming", desc: "", founder: "", shares: 1000, initialPrice: 100 });
+  const [submitted, setSubmitted] = useState(null);
+  const [tickerErr, setTickerErr] = useState("");
+
+  function handleRegister() {
+    const ticker = form.ticker.toUpperCase().trim();
+    if (!form.name || !ticker || !form.founder) return;
+    if (ticker.length < 2 || ticker.length > 6) { setTickerErr("Ticker must be 2–6 characters."); return; }
+    if (registeredAssets.find(a => a.id === ticker)) { setTickerErr("Ticker already taken."); return; }
+    setTickerErr("");
+    const newAsset = {
+      id: ticker,
+      name: form.name,
+      sector: form.sector,
+      desc: form.desc || `${form.name} — ${form.sector} company`,
+      founder: form.founder,
+      shares: parseInt(form.shares) || 1000,
+      initialPrice: parseFloat(form.initialPrice) || 100,
+      registered: new Date().toISOString().split("T")[0],
+    };
+    onRegister(newAsset);
+    setSubmitted(newAsset);
+    setForm({ name: "", ticker: "", sector: "Farming", desc: "", founder: "", shares: 1000, initialPrice: 100 });
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: S.bg, color: S.text, fontFamily: S.font }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');`}</style>
+
+      <div style={{ borderBottom: `1px solid ${S.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #10b981, #3b82f6)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>◉</div>
+          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>SKYBOUND</span>
+          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>COMPANIES</span>
+        </div>
+        <div style={{ display: "flex", gap: 2 }}>
+          {COMPANY_TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? S.panel2 : "none", border: "none", padding: "6px 14px", cursor: "pointer", fontSize: 13, color: tab === t ? S.teal : S.sub, borderRadius: 6, fontFamily: S.font, fontWeight: tab === t ? 600 : 400 }}>{t}</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: S.dim }}>company.skybound.at</div>
+      </div>
+
+      {tab === "Directory" && (
+        <div style={{ padding: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+            {[
+              ["Listed", registeredAssets.length, S.teal],
+              ["Sectors", SECTORS.length, S.blue],
+              ["Transactions", transactions.length, S.purple],
+            ].map(([l, v, c]) => (
+              <div key={l} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16 }}>
+                <div style={{ fontSize: 11, color: S.sub, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>{l}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: c, fontFamily: S.mono }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {registeredAssets.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "80px 0", color: S.dim }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>◉</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: S.sub, marginBottom: 8 }}>No companies registered yet</div>
+              <div style={{ fontSize: 13, color: S.dim }}>Be the first to register your company and list it on the exchange.</div>
+              <button onClick={() => setTab("Register")} style={{ marginTop: 16, background: "#052e23", border: `1px solid ${S.teal}`, borderRadius: 6, color: S.teal, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontFamily: S.font, fontWeight: 600 }}>Register Now →</button>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              {registeredAssets.map(c => {
+                const asset = assets.find(a => a.id === c.id);
+                const change = asset ? pct(asset.history) : 0;
+                const txCount = transactions.filter(t => t.asset === c.id).length;
+                return (
+                  <div key={c.id} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 20 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                          <span style={{ fontFamily: S.mono, fontSize: 13, fontWeight: 700, color: S.sub }}>{c.id}</span>
+                          <span style={{ fontSize: 18, fontWeight: 800, color: S.text }}>{c.name}</span>
+                          <Badge type="neutral">{c.sector}</Badge>
+                          {asset && <Badge type={change >= 0 ? "up" : "down"}>{fmtPct(change)}</Badge>}
+                        </div>
+                        <div style={{ fontSize: 12, color: S.dim }}>Founded by {c.founder} · {c.registered}</div>
+                      </div>
+                      {asset && (
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontFamily: S.mono, fontSize: 18, fontWeight: 800, color: S.text }}>{fmt(asset.price)} SC</div>
+                          <div style={{ fontSize: 11, color: S.sub }}>{c.shares.toLocaleString()} shares</div>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 13, color: S.sub, marginBottom: 12 }}>{c.desc}</div>
+                    {asset && <SparkLine history={asset.history.slice(-30)} color={change >= 0 ? S.teal : S.red} height={44} width="100%" />}
+                    <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+                      {asset && <div style={{ background: S.panel2, borderRadius: 6, padding: "5px 10px", fontSize: 11, color: S.sub }}>Mkt Cap: {fmt(asset.price * c.shares)} SC</div>}
+                      <div style={{ background: S.panel2, borderRadius: 6, padding: "5px 10px", fontSize: 11, color: S.sub }}>{txCount} transaction{txCount !== 1 ? "s" : ""}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "Register" && (
+        <div style={{ padding: 24, maxWidth: 500 }}>
+          {submitted ? (
+            <div style={{ background: "#052e23", border: `1px solid ${S.teal}`, borderRadius: 12, padding: 28, textAlign: "center" }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>✓</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: S.teal, marginBottom: 8 }}>Company Listed</div>
+              <div style={{ fontFamily: S.mono, fontSize: 20, fontWeight: 700, color: S.text, marginBottom: 4 }}>{submitted.id}</div>
+              <div style={{ fontSize: 13, color: S.sub, marginBottom: 16 }}>{submitted.name} has been added to the live market. Pricing is driven by the simulation algorithm — no manual control.</div>
+              <button onClick={() => { setSubmitted(null); setTab("Directory"); }} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 6, color: S.sub, padding: "8px 20px", cursor: "pointer", fontFamily: S.font }}>View Directory →</button>
+            </div>
+          ) : (
+            <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 12, padding: 24 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: S.text, marginBottom: 4 }}>Register a Company</div>
+              <div style={{ fontSize: 12, color: S.sub, marginBottom: 20 }}>Company will enter the live market simulation. Prices are algorithm-controlled.</div>
+
+              {[
+                ["Company Name",        "name",         "text",   "Skybound Farms Ltd."],
+                ["Founder (IGN)",       "founder",      "text",   "YourName"],
+                ["Ticker Symbol",       "ticker",       "text",   "SBF"],
+              ].map(([label, key, type, ph]) => (
+                <div key={key} style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>{label}</label>
+                  <input type={type} value={form[key]} onChange={e => { setForm(p => ({ ...p, [key]: e.target.value })); if (key === "ticker") setTickerErr(""); }}
+                    placeholder={ph}
+                    style={{ width: "100%", background: S.panel2, border: `1px solid ${key === "ticker" && tickerErr ? S.red : S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, boxSizing: "border-box", fontFamily: key === "ticker" ? S.mono : S.font }} />
+                  {key === "ticker" && tickerErr && <div style={{ fontSize: 11, color: S.red, marginTop: 4 }}>⚠ {tickerErr}</div>}
+                </div>
+              ))}
+
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Description</label>
+                <textarea value={form.desc} onChange={e => setForm(p => ({ ...p, desc: e.target.value }))} placeholder="What does your company do?" rows={3}
+                  style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Sector</label>
+                <select value={form.sector} onChange={e => setForm(p => ({ ...p, sector: e.target.value }))}
+                  style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, fontFamily: S.font }}>
+                  {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Total Shares</label>
+                  <input type="number" min="100" value={form.shares} onChange={e => setForm(p => ({ ...p, shares: e.target.value }))}
+                    style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, boxSizing: "border-box", fontFamily: S.mono }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: S.sub, display: "block", marginBottom: 6 }}>Initial Price (SC)</label>
+                  <input type="number" min="10" value={form.initialPrice} onChange={e => setForm(p => ({ ...p, initialPrice: e.target.value }))}
+                    style={{ width: "100%", background: S.panel2, border: `1px solid ${S.border}`, borderRadius: 6, color: S.text, padding: "8px 12px", fontSize: 13, boxSizing: "border-box", fontFamily: S.mono }} />
+                </div>
+              </div>
+
+              <Btn variant="buy" onClick={handleRegister} style={{ width: "100%", padding: "11px 0" }}>List Company on Exchange →</Btn>
+              <div style={{ marginTop: 10, fontSize: 11, color: S.dim, textAlign: "center" }}>Prices are simulation-controlled. No manual override possible.</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ADMIN APP ────────────────────────────────────────────────────────────────
+const ADMIN_TABS = ["Simulation", "Events", "Transactions", "System"];
+
+function AdminApp({ assets, events, transactions, onContest }) {
+  const [tab, setTab] = useState("Simulation");
+  const [speed, setSpeed] = useState(1);
+  const [intensity, setIntensity] = useState(1);
+  const [contestTarget, setContestTarget] = useState(null);
+
+  return (
+    <div style={{ minHeight: "100vh", background: S.bg, color: S.text, fontFamily: S.font }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');`}</style>
+
+      <div style={{ borderBottom: `1px solid ${S.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #f59e0b, #ef4444)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⚙</div>
+          <span style={{ fontWeight: 800, fontSize: 16, color: S.text, letterSpacing: "1px" }}>SKYBOUND</span>
+          <span style={{ fontSize: 10, color: S.dim, letterSpacing: 3 }}>ADMIN</span>
+          <span style={{ background: "#2d1111", color: S.red, fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 700 }}>SYSTEM ONLY</span>
+        </div>
+        <div style={{ display: "flex", gap: 2 }}>
+          {ADMIN_TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? S.panel2 : "none", border: "none", padding: "6px 14px", cursor: "pointer", fontSize: 13, color: tab === t ? S.amber : S.sub, borderRadius: 6, fontFamily: S.font, fontWeight: tab === t ? 600 : 400 }}>{t}</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: S.dim }}>admin.skybound.at</div>
+      </div>
+
+      {tab === "Simulation" && (
+        <div style={{ padding: 24, maxWidth: 560 }}>
+          <div style={{ background: "#1a0f05", border: "1px solid #78350f", borderRadius: 8, padding: 14, marginBottom: 24, fontSize: 12, color: "#92400e" }}>
+            ⚠ Admin controls affect simulation parameters only. Direct price manipulation is not possible.
+          </div>
+          {[
+            ["Simulation Speed", speed, setSpeed, 0.5, 3, 0.5, x => x + "×"],
+            ["Randomness Intensity", intensity, setIntensity, 0.5, 2, 0.1, x => x.toFixed(1)],
+          ].map(([label, val, setter, min, max, step, fmtFn]) => (
+            <div key={label} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 20, marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: S.sub }}>{label}</span>
+                <span style={{ fontFamily: S.mono, fontSize: 16, fontWeight: 800, color: S.amber }}>{fmtFn(val)}</span>
+              </div>
+              <input type="range" min={min} max={max} step={step} value={val} onChange={e => setter(parseFloat(e.target.value))} style={{ width: "100%", accentColor: S.amber }} />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: S.dim, marginTop: 4 }}>
+                <span>{fmtFn(min)}</span><span>{fmtFn(max)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "Events" && (
+        <div style={{ padding: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
+            {["boom", "crash", "sector", "hype"].map(type => {
+              const count = events.filter(e => e.type === type).length;
+              return (
+                <div key={type} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 8, padding: 14, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: S.sub, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>{type}</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: type === "boom" || type === "sector" ? S.green : type === "crash" ? S.red : S.purple, fontFamily: S.mono }}>{count}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ padding: "10px 16px", borderBottom: `1px solid ${S.border}`, fontSize: 11, color: S.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>Event Log (read-only)</div>
+            {events.slice(0, 20).map((ev, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${S.border2}`, fontSize: 12 }}>
+                <Badge type={ev.type === "boom" || ev.type === "sector" ? "sector" : ev.type === "crash" ? "down" : "event"}>{ev.type}</Badge>
+                <span style={{ color: S.sub, flex: 1 }}>{ev.title}</span>
+                <span style={{ color: S.dim }}>{ev.time?.toLocaleTimeString()}</span>
+              </div>
+            ))}
+            {events.length === 0 && <div style={{ padding: 24, textAlign: "center", color: S.dim }}>No events yet…</div>}
+          </div>
+        </div>
+      )}
+
+      {tab === "Transactions" && (
+        <div style={{ padding: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+            {[
+              ["Active",    transactions.filter(t => t.status === "active").length,    S.green],
+              ["Contested", transactions.filter(t => t.status === "contested").length, S.amber],
+              ["Reversed",  transactions.filter(t => t.status === "reversed").length,  S.blue],
+            ].map(([label, count, col]) => (
+              <div key={label} style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: S.sub, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: col, fontFamily: S.mono }}>{count}</div>
+              </div>
+            ))}
+          </div>
+
+          {transactions.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: S.dim }}>No transactions recorded yet.</div>
+          ) : (
+            <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "110px 80px 80px 60px 80px 90px 80px 90px", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${S.border}` }}>
+                {["TX ID", "Asset", "Buyer", "Qty", "Price", "Total", "Status", ""].map((h, i) => (
+                  <div key={i} style={{ fontSize: 10, color: S.dim, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</div>
+                ))}
+              </div>
+              {[...transactions].reverse().map(tx => (
+                <div key={tx.id} style={{ display: "grid", gridTemplateColumns: "110px 80px 80px 60px 80px 90px 80px 90px", gap: 8, padding: "9px 16px", borderBottom: `1px solid ${S.border2}`, alignItems: "center", opacity: tx.status === "reversed" ? 0.5 : 1 }}>
+                  <div style={{ fontFamily: S.mono, fontSize: 10, color: S.blue }}>{tx.id}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text, fontWeight: 700 }}>{tx.asset}</div>
+                  <div style={{ fontSize: 11, color: S.sub }}>{tx.buyer}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12 }}>{tx.quantity}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 11, color: S.sub }}>{fmt(tx.price_per_share)}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, fontWeight: 700, color: S.text }}>{fmt(tx.total_value)}</div>
+                  <Badge type={tx.status === "active" ? "active" : tx.status === "contested" ? "contested" : "reversed"}>{tx.status}</Badge>
+                  {tx.status === "active" ? (
+                    <button onClick={() => setContestTarget(tx)} style={{ background: "#2d1f00", border: `1px solid ${S.amber}`, borderRadius: 4, color: S.amber, padding: "4px 8px", cursor: "pointer", fontSize: 10, fontWeight: 700, fontFamily: S.font }}>CONTEST</button>
+                  ) : <span style={{ fontSize: 10, color: S.dim }}>{tx.contest_reason?.slice(0, 15) || "–"}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "System" && (
+        <div style={{ padding: 24, maxWidth: 500 }}>
+          <div style={{ background: S.panel, border: `1px solid ${S.border}`, borderRadius: 10, padding: 20, marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: S.text, marginBottom: 12 }}>System Status</div>
+            {[
+              ["Engine",          "Running",          S.green],
+              ["Assets Tracked",  assets.length,      S.blue],
+              ["Total Trades",    transactions.length, S.purple],
+              ["Active Trades",   transactions.filter(t=>t.status==="active").length, S.green],
+              ["Events Fired",    events.length,       S.amber],
+            ].map(([k, v, c]) => (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${S.border2}` }}>
+                <span style={{ fontSize: 13, color: S.sub }}>{k}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: c, fontFamily: S.mono }}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: "#0f1920", border: "1px solid #1e3a5f", borderRadius: 10, padding: 16, fontSize: 12, color: S.dim }}>
+            <div style={{ color: S.blue, marginBottom: 8, fontWeight: 700 }}>Economy Constraints</div>
+            <div>• No admin can directly set asset prices</div>
+            <div style={{ marginTop: 4 }}>• Prices derived from randomized walk algorithm</div>
+            <div style={{ marginTop: 4 }}>• Events fire automatically on schedule</div>
+            <div style={{ marginTop: 4 }}>• Transactions are append-only, never deleted</div>
+            <div style={{ marginTop: 4 }}>• Contest/reversal preserves full audit trail</div>
+            <div style={{ marginTop: 4 }}>• total_value is always server-computed (qty × price)</div>
+          </div>
+        </div>
+      )}
+
+      {contestTarget && (
+        <ContestModal tx={contestTarget} onClose={() => setContestTarget(null)} onContest={onContest} />
+      )}
+    </div>
+  );
+}
+
+// ─── ROOT APP ─────────────────────────────────────────────────────────────────
+function App() {
+  const [view, setView] = useState("market");
+  const [playerName] = useState("PlayerOne");
+
+  // Registered companies (empty by default — no pre-seeded data)
+  const [registeredAssets, setRegisteredAssets] = useState([]);
+
+  // Transaction ledger — append-only
+  const [transactions, setTransactions] = useState([]);
+
+  const { assets, events, activeEvent } = useEconomyEngine(registeredAssets);
+
+  function handleRegister(newAsset) {
+    setRegisteredAssets(prev => [...prev, newAsset]);
+  }
+
+  function handleTrade(asset, action, qty) {
+    const tx = createTransaction({
+      buyer: action === "buy" ? playerName : "SYSTEM",
+      seller: action === "sell" ? playerName : asset.id,
+      asset: asset.id,
+      quantity: qty,
+      pricePerShare: asset.price,
+    });
+    setTransactions(prev => [...prev, tx]);
+  }
+
+  function handleContest(txId, by, reason) {
+    setTransactions(prev => {
+      const idx = prev.findIndex(t => t.id === txId);
+      if (idx === -1) return prev;
+
+      const original = prev[idx];
+      // Create reversal entry
+      const reversal = createReversalTransaction(original);
+      // Mark original as contested then reversed
+      const updated = contestTransaction(original, { by, reason });
+      const finalOriginal = reverseTransaction(updated, reversal.id);
+
+      const next = [...prev];
+      next[idx] = finalOriginal;
+      return [...next, reversal];
+    });
+  }
+
+  return (
+    <div>
+      {/* Route bar */}
+      <div style={{ background: "#04080f", borderBottom: `1px solid ${S.border2}`, padding: "5px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 10, color: S.dim }}>Demo routing:</span>
+        {[
+          ["market",  "market.skybound.at"],
+          ["company", "company.skybound.at"],
+          ["admin",   "admin.skybound.at"],
+        ].map(([v, label]) => (
+          <button key={v} onClick={() => setView(v)} style={{ background: view === v ? S.panel2 : "none", border: `1px solid ${view === v ? "#1e3a5f" : S.border2}`, borderRadius: 4, padding: "3px 10px", cursor: "pointer", fontSize: 11, color: view === v ? S.blue : S.dim, fontFamily: S.font }}>
+            {label}
+          </button>
+        ))}
+        <span style={{ marginLeft: "auto", fontSize: 10, color: S.dim }}>
+          Player: <span style={{ color: S.teal, fontWeight: 700 }}>{playerName}</span>
+        </span>
+      </div>
+
+      {view === "market" && (
+        <MarketApp
+          assets={assets}
+          events={events}
+          activeEvent={activeEvent}
+          transactions={transactions}
+          onTrade={handleTrade}
+          onContest={handleContest}
+          playerName={playerName}
+        />
+      )}
+      {view === "company" && (
+        <CompanyApp
+          assets={assets}
+          registeredAssets={registeredAssets}
+          onRegister={handleRegister}
+          transactions={transactions}
+        />
+      )}
+      {view === "admin" && (
+        <AdminApp
+          assets={assets}
+          events={events}
+          transactions={transactions}
+          onContest={handleContest}
+        />
+      )}
+    </div>
+  );
+}
+
+
+    // Mount
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(<App />);
+  </script>
+</body>
+</html>
